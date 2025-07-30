@@ -21,14 +21,17 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#define I_MAX 0.3
+#define V_MAX 14.3
 #define VOLT_READINGS 40
 #define CURRENT_READINGS 40
-#define ADC_READINGS 5
+#define ADC_READINGS 4
 #define R2 39.0 // kOhm
 #define R3 10.0 // kOhm
 #define R5 47.0 // kOhm
 #define R6 10.0 // kOhm
 #define R_PANEL_SHUNT 4.7 // Ohm
+#define R_SHUNT 0.1 // Ohm
 
 /* USER CODE END Includes */
 
@@ -72,6 +75,8 @@ static void MX_TIM4_Init(void);
 
 uint16_t duty1 = 30;  // CH1 (PA0)
 uint16_t duty2 = 50;  // CH2 (PA1)
+uint16_t duty1_ccr = 720;
+uint16_t duty2_ccr = 720;
 float adc_readings[ADC_READINGS];
 float voltage_panel[VOLT_READINGS];
 float volt_panel_avg;
@@ -79,6 +84,10 @@ float voltage_battery[VOLT_READINGS];
 float volt_batt_avg;
 float test_shunt_panel[CURRENT_READINGS];
 float current_panel_avg;
+float volt1_shunt[CURRENT_READINGS];
+float volt1_avg;
+float load_current;
+
 
 uint16_t tim4_counter = 0; // Each count is 40s, up to the desired check value in standby mode.
 
@@ -106,14 +115,98 @@ void readADC_inputs()
 	}
 }
 
+void sunlightCheck()
+{
+	// Activate solar panel test with current source (view schematic)
+	SetDutyCycle(&htim2, TIM_CHANNEL_2, duty2);
+	// Wait 100ms
+	HAL_Delay(100);
+	// Read panel voltage divider and test current values
+	for(int i=0; i < VOLT_READINGS; i++)
+	{
+		readADC_inputs();
+		voltage_panel[i] = adc_readings[0];
+		test_shunt_panel[i] = adc_readings[1];
+		voltage_battery[i] = adc_readings[2];
+	}
+
+	// Deactivate solar panel test with current source
+	SetDutyCycle(&htim2, TIM_CHANNEL_2, 0);
+
+	// Average readings
+	volt_panel_avg = 0;
+	current_panel_avg = 0;
+	volt_batt_avg = 0;
+	for(int i=0; i < VOLT_READINGS; i++)
+	{
+		volt_panel_avg += voltage_panel[i];
+		current_panel_avg += test_shunt_panel[i];
+		volt_batt_avg += voltage_battery[i];
+	}
+	// Calculate real average panel voltage and test current
+	volt_panel_avg = ( ((volt_panel_avg / VOLT_READINGS)*3.3)/4095.0 ) * ((R5+R6)/R6) ;
+	current_panel_avg = ( ((current_panel_avg / VOLT_READINGS)*3.3)/4095.0 ) / R_PANEL_SHUNT;
+	volt_batt_avg = ( ((volt_panel_avg / VOLT_READINGS)*3.3)/4095.0 ) * ((R2+R3)/R3);
+}
+
+void adjustChargerPWM()
+{
+   // Read shunt terminal voltages
+   for(int i=0; i < VOLT_READINGS; i++)
+	{
+		readADC_inputs();
+		voltage_panel[i] = adc_readings[0];
+		voltage_battery[i] = adc_readings[2];
+		volt1_shunt[i] = adc_readings[3];
+	}
+   // Average readings
+   volt_panel_avg = 0;
+   volt_batt_avg = 0;
+   volt1_avg = 0;
+   for(int i=0; i < VOLT_READINGS; i++)
+   {
+	   volt_panel_avg += voltage_panel[i];
+	   volt_batt_avg += voltage_battery[i];
+	   volt1_avg += volt1_shunt[i];
+   }
+
+   // Finish calculating average and real voltages
+
+   volt_panel_avg = ( ((volt_panel_avg / VOLT_READINGS)*3.3)/4095.0 ) * ((R5+R6)/R6) ;
+   volt1_avg = (((volt1_avg / VOLT_READINGS)*3.3)/4095.0) * ((R2+R3)/R3); // Pre-shunt voltage
+   volt_batt_avg = ( ((volt_panel_avg / VOLT_READINGS)*3.3)/4095.0 ) * ((R2+R3)/R3); // Battery voltage
+   load_current = (volt1_avg - volt_batt_avg) / R_SHUNT; // [A]
+
+   // PWM Duty control logic for constant current and voltage modes
+
+   if(load_current < I_MAX){
+	  if(volt_batt_avg < V_MAX){
+		 if(duty1_ccr<1430)
+			 duty1_ccr++;
+		 HAL_Delay(1);
+		 __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, duty1_ccr);
+	  }
+	  else{
+		 if(duty1_ccr>2)
+			duty1_ccr--;
+		 HAL_Delay(1);
+		 __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, duty1_ccr);
+	  }
+   }
+}
+
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef* htim)
 {
 	tim4_counter += 1;
 	if(tim4_counter==2)
 	{
 		// Check sunlight flag every 80 seconds (for example)
-		sm_state = 1;
-		HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
+		if(sm_state == 0)
+		{
+			sm_state = 1;
+			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);
+			HAL_Delay(300);
+		}
 		tim4_counter = 0;
 	}
 }
@@ -160,7 +253,7 @@ int main(void)
   HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
   HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_2);
   //HAL_ADC_Start_DMA(&hadc1, adc_readings, 5);
-  SetDutyCycle(&htim2, TIM_CHANNEL_1, duty1);
+  SetDutyCycle(&htim2, TIM_CHANNEL_1, 0);
   SetDutyCycle(&htim2, TIM_CHANNEL_2, 0);
 
   /* USER CODE END 2 */
@@ -171,61 +264,51 @@ int main(void)
   {
 
 
-//	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
+	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
 //	HAL_Delay(100);
 //	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);
 //	HAL_Delay(100);
 
-	// Poll analog inputs (ADC1 readings)
-	readADC_inputs();
-	HAL_Delay(1);
-	duty1 = (uint32_t)((adc_readings[1]*100.0)/4095.0);
-	SetDutyCycle(&htim2, TIM_CHANNEL_1, duty1);
+//	// Poll analog inputs (ADC1 readings)
+//	readADC_inputs();
+//	HAL_Delay(1);
+//	duty1 = (uint32_t)((adc_readings[1]*100.0)/4095.0);
+//	SetDutyCycle(&htim2, TIM_CHANNEL_1, duty1);
 
 	switch(sm_state)
 	{
 	case 0: // Standby, timer will periodically change sm_state to 1.
-		// Stay, do nothing
+
+		// Stay, do nothing but maintain PWM outputs OFF
+		SetDutyCycle(&htim2, TIM_CHANNEL_1, 0);
+		SetDutyCycle(&htim2, TIM_CHANNEL_2, 0);
 		break;
 	case 1: // Sunlight check
-
-		// Activate solar panel test with current source (view schematic)
-		SetDutyCycle(&htim2, TIM_CHANNEL_2, duty2);
-		// Wait 100ms
-		HAL_Delay(100);
-		// Read panel voltage divider and test current values
-		for(int i=0; i < VOLT_READINGS; i++)
-		{
-			readADC_inputs();
-			voltage_panel[i] = adc_readings[0];
-			test_shunt_panel[i] = adc_readings[1];
-			voltage_battery[i] = adc_readings[2];
-		}
-		// Average readings
-		for(int i=0; i < VOLT_READINGS; i++)
-		{
-			volt_panel_avg += voltage_panel[i];
-			current_panel_avg += test_shunt_panel[i];
-			volt_batt_avg += voltage_battery[i];
-		}
-		// Calculate real average panel voltage and test current
-		volt_panel_avg = ( ((volt_panel_avg / VOLT_READINGS)*3.3)/4095.0 ) * ((R5+R6)/R6) ;
-		current_panel_avg = ( ((current_panel_avg / VOLT_READINGS)*3.3)/4095.0 ) / R_PANEL_SHUNT;
-		volt_batt_avg = ( ((volt_panel_avg / VOLT_READINGS)*3.3)/4095.0 ) * ((R2+R3)/R3) ;
-
-		if((volt_panel_avg >= 15.0) && (current_panel_avg >= 0.18) && volt_batt_avg < 14.2)
+		HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
+		sunlightCheck();
+		if((volt_panel_avg >= 15.0) && (current_panel_avg >= 0.28) && volt_batt_avg < 14.3)
 			sm_state = 2; // Go to charge battery state
 		else
 			sm_state = 0; // Go back to standby state
 		break;
 
 	case 2: // Charge battery
+		adjustChargerPWM();
 
-
+		if(volt_batt_avg >= 14.3 || volt_panel_avg < 15.0)
+		{
+			// Turns OFF Charger and goes to standby
+			SetDutyCycle(&htim2, TIM_CHANNEL_1, 0);
+			sm_state = 0;
+		}
+		else
+			sm_state = 2;
 		break;
 
 	default:
 		sm_state = 0;
+		SetDutyCycle(&htim2, TIM_CHANNEL_1, 0);
+		SetDutyCycle(&htim2, TIM_CHANNEL_2, 0);
 		break;
 	}
 
