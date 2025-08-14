@@ -21,7 +21,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#define I_MAX 0.3
+#define I_MAX 0.35
 #define V_MAX 14.3
 #define VOLT_READINGS 40
 #define CURRENT_READINGS 40
@@ -30,8 +30,11 @@
 #define R3 10.0 // kOhm
 #define R5 47.0 // kOhm
 #define R6 10.0 // kOhm
-#define R_PANEL_SHUNT 4.7 // Ohm
-#define R_SHUNT 0.1 // Ohm
+#define R17 47.0 // kOhm
+#define R12 2.7 // kOhm
+#define R_PANEL_SHUNT 3.3 // Ohm
+#define R_SHUNT 0.44 // Ohm
+#define Vref 3.25 // Hardcode horrible para probar
 
 /* USER CODE END Includes */
 
@@ -73,23 +76,24 @@ static void MX_TIM4_Init(void);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
-uint16_t duty1 = 30;  // CH1 (PA0)
-uint16_t duty2 = 50;  // CH2 (PA1)
+uint16_t duty1 = 50;  // CH1 (PA0)
+uint16_t duty2 = 35;  // CH2 (PA1)
 uint16_t duty1_ccr = 720;
 uint16_t duty2_ccr = 720;
+uint16_t power_on_flag = 1;
 float adc_readings[ADC_READINGS];
 float voltage_panel[VOLT_READINGS];
-float volt_panel_avg;
+float volt_panel_avg=0.0;
 float voltage_battery[VOLT_READINGS];
-float volt_batt_avg;
+float volt_batt_avg=0.0;
 float test_shunt_panel[CURRENT_READINGS];
-float current_panel_avg;
+float current_panel_avg=0.0;
 float volt1_shunt[CURRENT_READINGS];
-float volt1_avg;
-float load_current;
+float volt1_avg=0.0;
+float load_current=0.0;
 
 
-uint16_t tim4_counter = 0; // Each count is 40s, up to the desired check value in standby mode.
+uint16_t tim4_counterr = 0; // Each count is 40s, up to the desired check value in standby mode.
 
 /* State machine states:
 	0: Standby
@@ -112,6 +116,7 @@ void readADC_inputs()
 		HAL_ADC_Start(&hadc1); // Start ADC Conversion
 		HAL_ADC_PollForConversion(&hadc1, 1); // Poll ADC1 Peripheral & TimeOut = 1mSec
 		adc_readings[i] = HAL_ADC_GetValue(&hadc1); // Read ADC Conversion Result
+		HAL_Delay(1);
 	}
 }
 
@@ -119,8 +124,8 @@ void sunlightCheck()
 {
 	// Activate solar panel test with current source (view schematic)
 	SetDutyCycle(&htim2, TIM_CHANNEL_2, duty2);
-	// Wait 100ms
-	HAL_Delay(100);
+	// Wait 500ms
+	HAL_Delay(500);
 	// Read panel voltage divider and test current values
 	for(int i=0; i < VOLT_READINGS; i++)
 	{
@@ -128,6 +133,7 @@ void sunlightCheck()
 		voltage_panel[i] = adc_readings[0];
 		test_shunt_panel[i] = adc_readings[1];
 		voltage_battery[i] = adc_readings[2];
+		HAL_Delay(1);
 	}
 
 	// Deactivate solar panel test with current source
@@ -139,14 +145,42 @@ void sunlightCheck()
 	volt_batt_avg = 0;
 	for(int i=0; i < VOLT_READINGS; i++)
 	{
-		volt_panel_avg += voltage_panel[i];
-		current_panel_avg += test_shunt_panel[i];
-		volt_batt_avg += voltage_battery[i];
+		volt_panel_avg += voltage_panel[i] + 745;
+		current_panel_avg += test_shunt_panel[i] - 245;
+		volt_batt_avg += voltage_battery[i] + 685;
 	}
 	// Calculate real average panel voltage and test current
-	volt_panel_avg = ( ((volt_panel_avg / VOLT_READINGS)*3.3)/4095.0 ) * ((R5+R6)/R6) ;
-	current_panel_avg = ( ((current_panel_avg / VOLT_READINGS)*3.3)/4095.0 ) / R_PANEL_SHUNT;
-	volt_batt_avg = ( ((volt_panel_avg / VOLT_READINGS)*3.3)/4095.0 ) * ((R2+R3)/R3);
+	volt_panel_avg = ( ((volt_panel_avg / VOLT_READINGS)*Vref)/4095.0 ) * ((R5+R6)/R6) ;
+	current_panel_avg = ( ((current_panel_avg / VOLT_READINGS)*Vref)/4095.0 ) / R_PANEL_SHUNT;
+	volt_batt_avg = ( ((volt_panel_avg / VOLT_READINGS)*Vref)/4095.0 ) * ((R2+R3)/R3);
+}
+
+void testADC()
+{
+   // Read shunt terminal voltages
+   for(int i=0; i < VOLT_READINGS; i++)
+	{
+		readADC_inputs();
+		voltage_panel[i] = adc_readings[0];
+		voltage_battery[i] = adc_readings[2];
+		volt1_shunt[i] = adc_readings[3];
+	}
+   // Average readings
+   volt_panel_avg = 0;
+   volt_batt_avg = 0;
+   volt1_avg = 0;
+   for(int i=0; i < VOLT_READINGS; i++)
+   {
+	   volt_panel_avg += voltage_panel[i];
+	   volt_batt_avg += voltage_battery[i] + 685;
+	   volt1_avg += volt1_shunt[i];
+   }
+
+   // Finish calculating average and real voltages
+
+   volt_panel_avg = ( ((volt_panel_avg / VOLT_READINGS)*Vref)/4095.0 ) * ((R5+R6)/R6) ;
+   load_current = ((((volt1_avg / VOLT_READINGS)*Vref)/4095.0) / (R17/R12) ) / R_SHUNT ; // Current load
+   volt_batt_avg = ( ((volt_batt_avg / VOLT_READINGS)*Vref)/4095.0 ) * ((R2+R3)/R3); // Battery voltage
 }
 
 void adjustChargerPWM()
@@ -165,49 +199,101 @@ void adjustChargerPWM()
    volt1_avg = 0;
    for(int i=0; i < VOLT_READINGS; i++)
    {
-	   volt_panel_avg += voltage_panel[i];
-	   volt_batt_avg += voltage_battery[i];
-	   volt1_avg += volt1_shunt[i];
+	   volt_panel_avg += voltage_panel[i] + 745;
+	   volt_batt_avg += voltage_battery[i] + 685;
+	   volt1_avg += volt1_shunt[i] - 270;
    }
 
    // Finish calculating average and real voltages
 
-   volt_panel_avg = ( ((volt_panel_avg / VOLT_READINGS)*3.3)/4095.0 ) * ((R5+R6)/R6) ;
-   volt1_avg = (((volt1_avg / VOLT_READINGS)*3.3)/4095.0) * ((R2+R3)/R3); // Pre-shunt voltage
-   volt_batt_avg = ( ((volt_panel_avg / VOLT_READINGS)*3.3)/4095.0 ) * ((R2+R3)/R3); // Battery voltage
-   load_current = (volt1_avg - volt_batt_avg) / R_SHUNT; // [A]
+   volt_panel_avg = ( ((volt_panel_avg / VOLT_READINGS)*Vref)/4095.0 ) * ((R5+R6)/R6) ;
+   volt_batt_avg = ( ((volt_batt_avg / VOLT_READINGS)*Vref)/4095.0 ) * ((R2+R3)/R3); // Battery voltage
+   load_current = (( (( (volt1_avg / VOLT_READINGS)*Vref)/4095.0) / (R17/R12) )*2.0) / R_SHUNT ; // Current load
 
    // PWM Duty control logic for constant current and voltage modes
 
    if(load_current < I_MAX){
 	  if(volt_batt_avg < V_MAX){
-		 if(duty1_ccr<1430)
-			 duty1_ccr++;
-		 HAL_Delay(1);
-		 __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, duty1_ccr);
+		 if(duty1<92)
+			 duty1++;
+		 HAL_Delay(2);
+		 SetDutyCycle(&htim2, TIM_CHANNEL_1, duty1);
 	  }
 	  else{
-		 if(duty1_ccr>2)
-			duty1_ccr--;
-		 HAL_Delay(1);
-		 __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, duty1_ccr);
+		 if(duty1>6)
+			 duty1--;
+		 HAL_Delay(2);
+		 SetDutyCycle(&htim2, TIM_CHANNEL_1, duty1);
 	  }
    }
+   else
+   {
+	   HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);
+	   HAL_Delay(100);
+	   HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
+	   HAL_Delay(100);
+   }
+
+//   if(load_current < I_MAX){
+//	  if(volt_batt_avg < V_MAX){
+//		 if(duty1_ccr<1430)
+//			 duty1_ccr++;
+//		 HAL_Delay(1);
+//		 __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, duty1_ccr);
+//	  }
+//	  else{
+//		 if(duty1_ccr>4)
+//			duty1_ccr--;
+//		 HAL_Delay(1);
+//		 __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, duty1_ccr);
+//	  }
+//   }
+}
+
+void updateStateLed(int state_num)
+{
+	switch(state_num)
+	{
+	case 0:
+		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_RESET);
+		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_RESET);
+		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7, GPIO_PIN_SET);
+		break;
+	case 1:
+		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_RESET);
+		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_SET);
+		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7, GPIO_PIN_RESET);
+		break;
+	case 2:
+		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_SET);
+		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_RESET);
+		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7, GPIO_PIN_RESET);
+		break;
+	default:
+		break;
+
+	}
 }
 
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef* htim)
 {
-	tim4_counter += 1;
-	if(tim4_counter==2)
+	// When turned on, uC comes here directly without waiting for the timer, so this is a fix for the moment
+
+	if(power_on_flag)
+		tim4_counterr = 0;
+	else
+		tim4_counterr++;
+
+	if(tim4_counterr==1)
 	{
 		// Check sunlight flag every 80 seconds (for example)
 		if(sm_state == 0)
 		{
 			sm_state = 1;
 			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);
-			HAL_Delay(300);
+			//HAL_Delay(1000);
 		}
-		tim4_counter = 0;
+		tim4_counterr = 0;
 	}
 }
 
@@ -252,9 +338,26 @@ int main(void)
   HAL_TIM_Base_Start_IT(&htim4);
   HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
   HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_2);
-  //HAL_ADC_Start_DMA(&hadc1, adc_readings, 5);
-  SetDutyCycle(&htim2, TIM_CHANNEL_1, 0);
+  SetDutyCycle(&htim2, TIM_CHANNEL_1, 5);
   SetDutyCycle(&htim2, TIM_CHANNEL_2, 0);
+
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5|GPIO_PIN_6|GPIO_PIN_7, GPIO_PIN_RESET);
+
+  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
+  HAL_Delay(500);
+  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);
+  HAL_Delay(500);
+  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
+  HAL_Delay(500);
+  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);
+  HAL_Delay(500);
+  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
+  HAL_Delay(500);
+  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);
+  HAL_Delay(500);
+  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
+
+  power_on_flag = 1;
 
   /* USER CODE END 2 */
 
@@ -263,42 +366,72 @@ int main(void)
   while (1)
   {
 
-
-	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
-//	HAL_Delay(100);
-//	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);
-//	HAL_Delay(100);
-
-//	// Poll analog inputs (ADC1 readings)
-//	readADC_inputs();
-//	HAL_Delay(1);
-//	duty1 = (uint32_t)((adc_readings[1]*100.0)/4095.0);
-//	SetDutyCycle(&htim2, TIM_CHANNEL_1, duty1);
-
 	switch(sm_state)
 	{
 	case 0: // Standby, timer will periodically change sm_state to 1.
-
+		power_on_flag = 0;
 		// Stay, do nothing but maintain PWM outputs OFF
-		SetDutyCycle(&htim2, TIM_CHANNEL_1, 0);
+		SetDutyCycle(&htim2, TIM_CHANNEL_1, 5);
 		SetDutyCycle(&htim2, TIM_CHANNEL_2, 0);
+		// Update indicator LEDs
+		updateStateLed(sm_state);
+
 		break;
 	case 1: // Sunlight check
+		// Update indicator LEDs
 		HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
+		updateStateLed(sm_state);
+
 		sunlightCheck();
-		if((volt_panel_avg >= 15.0) && (current_panel_avg >= 0.28) && volt_batt_avg < 14.3)
+//		if(volt_panel_avg >= 15.0)
+//		{
+//			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
+//			HAL_Delay(500);
+//			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);
+//			HAL_Delay(500);
+//		}
+//		if(current_panel_avg >= 0.1)
+//		{
+//			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
+//			HAL_Delay(300);
+//			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);
+//			HAL_Delay(300);
+//			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
+//			HAL_Delay(300);
+//			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);
+//			HAL_Delay(300);
+//		}
+//		if(volt_batt_avg < 14.0)
+//		{
+//			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
+//			HAL_Delay(1000);
+//			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);
+//			HAL_Delay(1000);
+//			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
+//			HAL_Delay(1000);
+//			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);
+//			HAL_Delay(1000);
+//		}
+		//if((volt_panel_avg >= 15.0) && (current_panel_avg >= 0.1) && volt_batt_avg < 14.3)
+		if((volt_panel_avg >= 10.0) && (current_panel_avg >= 0.25) && volt_batt_avg < 14.3)
+		{
 			sm_state = 2; // Go to charge battery state
-		else
+			SetDutyCycle(&htim2, TIM_CHANNEL_1, 50);
+			SetDutyCycle(&htim2, TIM_CHANNEL_2, 0);
+		}else
 			sm_state = 0; // Go back to standby state
 		break;
 
 	case 2: // Charge battery
+		// Update indicator LEDs
+		updateStateLed(sm_state);
+		// Charging algorithm and reading of ADCs
 		adjustChargerPWM();
 
-		if(volt_batt_avg >= 14.3 || volt_panel_avg < 15.0)
+		if(volt_batt_avg >= 14.45 || volt_panel_avg < 10.0)
 		{
 			// Turns OFF Charger and goes to standby
-			SetDutyCycle(&htim2, TIM_CHANNEL_1, 0);
+			SetDutyCycle(&htim2, TIM_CHANNEL_1, 5);
 			sm_state = 0;
 		}
 		else
@@ -307,7 +440,7 @@ int main(void)
 
 	default:
 		sm_state = 0;
-		SetDutyCycle(&htim2, TIM_CHANNEL_1, 0);
+		SetDutyCycle(&htim2, TIM_CHANNEL_1, 5);
 		SetDutyCycle(&htim2, TIM_CHANNEL_2, 0);
 		break;
 	}
@@ -393,7 +526,7 @@ static void MX_ADC1_Init(void)
   hadc1.Init.NbrOfDiscConversion = 1;
   hadc1.Init.ExternalTrigConv = ADC_SOFTWARE_START;
   hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
-  hadc1.Init.NbrOfConversion = 5;
+  hadc1.Init.NbrOfConversion = 4;
   if (HAL_ADC_Init(&hadc1) != HAL_OK)
   {
     Error_Handler();
@@ -411,7 +544,7 @@ static void MX_ADC1_Init(void)
 
   /** Configure Regular Channel
   */
-  sConfig.Channel = ADC_CHANNEL_4;
+  sConfig.Channel = ADC_CHANNEL_7;
   sConfig.Rank = ADC_REGULAR_RANK_2;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
   {
@@ -429,17 +562,8 @@ static void MX_ADC1_Init(void)
 
   /** Configure Regular Channel
   */
-  sConfig.Channel = ADC_CHANNEL_6;
+  sConfig.Channel = ADC_CHANNEL_2;
   sConfig.Rank = ADC_REGULAR_RANK_4;
-  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-
-  /** Configure Regular Channel
-  */
-  sConfig.Channel = ADC_CHANNEL_7;
-  sConfig.Rank = ADC_REGULAR_RANK_5;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
   {
     Error_Handler();
@@ -564,9 +688,13 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOD_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
+  __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5|GPIO_PIN_6|GPIO_PIN_7, GPIO_PIN_RESET);
 
   /*Configure GPIO pin : PC13 */
   GPIO_InitStruct.Pin = GPIO_PIN_13;
@@ -574,6 +702,13 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : PB5 PB6 PB7 */
+  GPIO_InitStruct.Pin = GPIO_PIN_5|GPIO_PIN_6|GPIO_PIN_7;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 
