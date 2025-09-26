@@ -36,6 +36,12 @@
 #define R_SHUNT 0.44 // Ohm
 #define Vref 3.25 // Hardcode horrible para probar
 
+#define ADC0CAL 0
+#define ADC1CAL 0
+#define ADC2CAL 550
+#define ADC3CAL 0
+
+
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -145,9 +151,9 @@ void sunlightCheck()
 	volt_batt_avg = 0;
 	for(int i=0; i < VOLT_READINGS; i++)
 	{
-		volt_panel_avg += voltage_panel[i] + 745;
-		current_panel_avg += test_shunt_panel[i] - 245;
-		volt_batt_avg += voltage_battery[i] + 685;
+		volt_panel_avg += voltage_panel[i] + ADC1CAL;
+		current_panel_avg += test_shunt_panel[i] + ADC0CAL;
+		volt_batt_avg += voltage_battery[i] + ADC2CAL;
 	}
 	// Calculate real average panel voltage and test current
 	volt_panel_avg = ( ((volt_panel_avg / VOLT_READINGS)*Vref)/4095.0 ) * ((R5+R6)/R6) ;
@@ -162,23 +168,27 @@ void testADC()
 	{
 		readADC_inputs();
 		voltage_panel[i] = adc_readings[0];
+		test_shunt_panel[i] = adc_readings[1];
 		voltage_battery[i] = adc_readings[2];
 		volt1_shunt[i] = adc_readings[3];
 	}
    // Average readings
    volt_panel_avg = 0;
+   current_panel_avg = 0;
    volt_batt_avg = 0;
    volt1_avg = 0;
    for(int i=0; i < VOLT_READINGS; i++)
    {
 	   volt_panel_avg += voltage_panel[i];
-	   volt_batt_avg += voltage_battery[i] + 685;
+	   current_panel_avg += test_shunt_panel[i];
+	   volt_batt_avg += voltage_battery[i];
 	   volt1_avg += volt1_shunt[i];
    }
 
    // Finish calculating average and real voltages
 
    volt_panel_avg = ( ((volt_panel_avg / VOLT_READINGS)*Vref)/4095.0 ) * ((R5+R6)/R6) ;
+   current_panel_avg = current_panel_avg / VOLT_READINGS;
    load_current = ((((volt1_avg / VOLT_READINGS)*Vref)/4095.0) / (R17/R12) ) / R_SHUNT ; // Current load
    volt_batt_avg = ( ((volt_batt_avg / VOLT_READINGS)*Vref)/4095.0 ) * ((R2+R3)/R3); // Battery voltage
 }
@@ -199,9 +209,9 @@ void adjustChargerPWM()
    volt1_avg = 0;
    for(int i=0; i < VOLT_READINGS; i++)
    {
-	   volt_panel_avg += voltage_panel[i] + 745;
-	   volt_batt_avg += voltage_battery[i] + 685;
-	   volt1_avg += volt1_shunt[i] - 270;
+	   volt_panel_avg += voltage_panel[i] + ADC1CAL;
+	   volt_batt_avg += voltage_battery[i] + ADC2CAL;
+	   volt1_avg += volt1_shunt[i] + ADC0CAL;
    }
 
    // Finish calculating average and real voltages
@@ -363,6 +373,9 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+  //while(1)
+  //	  testADC();
+
   while (1)
   {
 
@@ -383,36 +396,7 @@ int main(void)
 		updateStateLed(sm_state);
 
 		sunlightCheck();
-//		if(volt_panel_avg >= 15.0)
-//		{
-//			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
-//			HAL_Delay(500);
-//			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);
-//			HAL_Delay(500);
-//		}
-//		if(current_panel_avg >= 0.1)
-//		{
-//			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
-//			HAL_Delay(300);
-//			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);
-//			HAL_Delay(300);
-//			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
-//			HAL_Delay(300);
-//			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);
-//			HAL_Delay(300);
-//		}
-//		if(volt_batt_avg < 14.0)
-//		{
-//			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
-//			HAL_Delay(1000);
-//			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);
-//			HAL_Delay(1000);
-//			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
-//			HAL_Delay(1000);
-//			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);
-//			HAL_Delay(1000);
-//		}
-		//if((volt_panel_avg >= 15.0) && (current_panel_avg >= 0.1) && volt_batt_avg < 14.3)
+
 		if((volt_panel_avg >= 10.0) && (current_panel_avg >= 0.25) && volt_batt_avg < 14.3)
 		{
 			sm_state = 2; // Go to charge battery state
@@ -428,7 +412,7 @@ int main(void)
 		// Charging algorithm and reading of ADCs
 		adjustChargerPWM();
 
-		if(volt_batt_avg >= 14.45 || volt_panel_avg < 10.0)
+		if(volt_batt_avg >= 15.0 || volt_panel_avg < 5.0)
 		{
 			// Turns OFF Charger and goes to standby
 			SetDutyCycle(&htim2, TIM_CHANNEL_1, 5);
