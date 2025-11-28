@@ -30,10 +30,12 @@
 #define R3 10.0 // kOhm
 #define R5 47.0 // kOhm
 #define R6 10.0 // kOhm
-#define R17 47.0 // kOhm
-#define R12 2.7 // kOhm
+//#define R17 47.0 // kOhm
+//#define R12 2.7 // kOhm
+#define R19 18 // kOhm
+#define R20 2.7 // kOhm
 #define R_PANEL_SHUNT 3.3 // Ohm
-#define R_SHUNT 0.44 // Ohm
+#define R_SHUNT 0.22 // Ohm
 #define Vref 3.25 // Hardcode horrible para probar
 
 #define ADC0CAL 0
@@ -189,7 +191,7 @@ void testADC()
 
    volt_panel_avg = ( ((volt_panel_avg / VOLT_READINGS)*Vref)/4095.0 ) * ((R5+R6)/R6) ;
    current_panel_avg = current_panel_avg / VOLT_READINGS;
-   load_current = ((((volt1_avg / VOLT_READINGS)*Vref)/4095.0) / (R17/R12) ) / R_SHUNT ; // Current load
+   load_current = (( (( (volt1_avg / VOLT_READINGS)*Vref)/4095.0) / (1 + R19/R20) )) / R_SHUNT ; // Current load
    volt_batt_avg = ( ((volt_batt_avg / VOLT_READINGS)*Vref)/4095.0 ) * ((R2+R3)/R3); // Battery voltage
 }
 
@@ -218,7 +220,7 @@ void adjustChargerPWM()
 
    volt_panel_avg = ( ((volt_panel_avg / VOLT_READINGS)*Vref)/4095.0 ) * ((R5+R6)/R6) ;
    volt_batt_avg = ( ((volt_batt_avg / VOLT_READINGS)*Vref)/4095.0 ) * ((R2+R3)/R3); // Battery voltage
-   load_current = (( (( (volt1_avg / VOLT_READINGS)*Vref)/4095.0) / (R17/R12) )*2.0) / R_SHUNT ; // Current load
+   load_current = (( (( (volt1_avg / VOLT_READINGS)*Vref)/4095.0) / (1 + R19/R20) )) / R_SHUNT ; // Current load
 
    // PWM Duty control logic for constant current and voltage modes
 
