@@ -21,7 +21,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#define I_MAX 0.35
+#define I_MAX 0.4
 #define V_MAX 14.3
 #define VOLT_READINGS 40
 #define CURRENT_READINGS 40
@@ -32,7 +32,7 @@
 #define R6 10.0 // kOhm
 //#define R17 47.0 // kOhm
 //#define R12 2.7 // kOhm
-#define R19 18 // kOhm
+#define R19 39 // kOhm
 #define R20 2.7 // kOhm
 #define R_PANEL_SHUNT 3.3 // Ohm
 #define R_SHUNT 0.22 // Ohm
@@ -399,7 +399,7 @@ int main(void)
 
 		sunlightCheck();
 
-		if((volt_panel_avg >= 10.0) && (current_panel_avg >= 0.25) && volt_batt_avg < 14.3)
+		if((volt_panel_avg >= 12.0) && (current_panel_avg >= 0.25) && volt_batt_avg < 14.3) // volt_panel_avg >= 10.0
 		{
 			sm_state = 2; // Go to charge battery state
 			SetDutyCycle(&htim2, TIM_CHANNEL_1, 50);
@@ -414,7 +414,7 @@ int main(void)
 		// Charging algorithm and reading of ADCs
 		adjustChargerPWM();
 
-		if(volt_batt_avg >= 15.0 || volt_panel_avg < 5.0)
+		if(volt_batt_avg >= 15.0 || volt_panel_avg < 12.0) // volt_panel_avg < 5.0
 		{
 			// Turns OFF Charger and goes to standby
 			SetDutyCycle(&htim2, TIM_CHANNEL_1, 5);
