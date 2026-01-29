@@ -22,7 +22,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #define I_MAX 0.4
-#define V_MAX 14.3
+#define V_MAX 13.6//14.3
 #define VOLT_READINGS 40
 #define CURRENT_READINGS 40
 #define ADC_READINGS 4
@@ -267,9 +267,10 @@ void updateStateLed(int state_num)
 	switch(state_num)
 	{
 	case 0:
-		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_RESET);
+		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_SET);
 		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_RESET);
-		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7, GPIO_PIN_SET);
+		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7, GPIO_PIN_RESET);
+
 		break;
 	case 1:
 		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_RESET);
@@ -277,9 +278,9 @@ void updateStateLed(int state_num)
 		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7, GPIO_PIN_RESET);
 		break;
 	case 2:
-		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_SET);
+		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_RESET);
 		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_RESET);
-		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7, GPIO_PIN_RESET);
+		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7, GPIO_PIN_SET);
 		break;
 	default:
 		break;
@@ -405,7 +406,7 @@ int main(void)
 			SetDutyCycle(&htim2, TIM_CHANNEL_1, 50);
 			SetDutyCycle(&htim2, TIM_CHANNEL_2, 0);
 		}else
-			sm_state = 0; // Go back to standby state
+			sm_state = 2;//0; bypass check for test // Go back to standby state
 		break;
 
 	case 2: // Charge battery
